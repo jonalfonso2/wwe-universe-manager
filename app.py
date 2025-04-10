@@ -650,7 +650,6 @@ class StorylineApp:
         # Finalize & Lock
         btnf = tk.Frame(gf); btnf.pack(pady=5)
         tk.Button(btnf, text="Finalize & Save Card", command=self.finalize_card).pack(side="left", padx=5)
-        tk.Button(btnf, text="Lock Results",        command=self.lock_results).pack(side="left")
 
     # ---------- Match Generator Helpers ----------
     def on_mg_champ_selected(self):
@@ -722,15 +721,39 @@ class StorylineApp:
 
     def load_match_gen_roster(self):
         self.update_mg_formats()
+
         b = self.mg_brand.get()
-        self.cursor.execute("SELECT title FROM championships WHERE brand=?", (b,))
+        # Show all titles if Brand is “All”
+        if b == "All":
+            self.cursor.execute("SELECT title FROM championships")
+        else:
+            self.cursor.execute("SELECT title FROM championships WHERE brand=?", (b,))
+
         titles = ["None"] + [r[0] for r in self.cursor.fetchall()]
         titles.sort(key=self._sort_key)
-        self.mg_champ_cb['values'] = titles; self.mg_champ.set("None")
-        self.refresh_match_gallery()
-        self.mg_style_cb['values'] = self.custom_match_types
+
+        self.mg_champ_cb['values'] = titles
+        if self.mg_champ.get() not in titles:
+            self.mg_champ.set("None")
+        
+            # After resetting self.mg_pool...
+        champ = self.mg_champ.get()
+        if champ and champ != "None":
+            # Lookup the championship’s gender
+            self.cursor.execute("SELECT gender, type FROM championships WHERE title=?", (champ,))
+            row = self.cursor.fetchone()
+            if row:
+                gender, ctype = row
+                # Filter by gender
+                self.mg_pool = [w for w in self.mg_pool if self.get_wrestler_gender(w) == gender]
+    def get_wrestler_gender(self, name):
+        self.cursor.execute("SELECT gender FROM wrestlers WHERE name=?", (name,))
+        r = self.cursor.fetchone()
+        return r[0] if r else None
 
     def refresh_match_gallery(self):
+        booked = {p for m in self.booked_matches for team in m["teams"] for p in team}
+        available = [w for w in self.mg_pool if w not in booked]
         for w in self.mg_gallery.winfo_children(): w.destroy()
         self.mg_thumb_refs.clear()
         for idx,name in enumerate(self.mg_pool):
@@ -930,19 +953,6 @@ class StorylineApp:
                         self.mg_pool.append(p)
         self.mg_pool.sort(key=self._sort_key)
         self.refresh_card(); self.refresh_match_gallery()
-
-    # ---------- Lock Results ----------
-    def lock_results(self):
-        for i, m in enumerate(self.booked_matches):
-            mf = self.card_frame.grid_slaves(row=i//2, column=i%2)[0]
-            ctrl = mf.winfo_children()[-1]
-            win_cb = ctrl.winfo_children()[1]
-            if not win_cb.get():
-                return messagebox.showwarning("Missing Winner", f"Please select a winner for match {i+1}")
-        for i in range(len(self.booked_matches)):
-            self.record_result(i)
-        self.refresh_stats()
-        messagebox.showinfo("Locked", "All results recorded and card locked.")
 
     # ---------- Finalize & Save Card ----------
     def finalize_card(self):
